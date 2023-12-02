@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8" />
-    <title>Making your first Phaser 3 Game - Part 7</title>
+    <title>Game</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
     <style type="text/css">
         body {
@@ -39,15 +39,22 @@
         var cursors;
         var bullets;
         var lastFired = 0;
+        var dash_cd = 0;
+
+        /**test**/
+        var Texture_hp;
+        var Texture_dash_cd;
+
 
         var game = new Phaser.Game(config);
 
         function preload() {
             this.load.image('sky', 'assets/sky.png');
             this.load.image('ground', 'assets/platform.png');
-            this.load.image('bullet', 'assets/star.png');
+            this.load.spritesheet('bullet', 'assets/star.png', { frameWidth: 24, frameHeight: 22 });
             this.load.image('bomb', 'assets/bomb.png');
             this.load.spritesheet('dude', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
+            this.load.spritesheet('erm', 'assets/erm.png', { frameWidth: 100, frameHeight: 100 });
         }
 
         function create() {
@@ -88,7 +95,13 @@
                 repeat: -1
             });
 
-            /**子彈**/
+            // Erm
+            erm = this.physics.add.sprite(375, 100, 'erm');
+            erm.setCollideWorldBounds(true);
+            erm.health = 10000; // 初始化erm的血量为100
+            erm.isInvulnerable = false; // 增加一个不可攻击的标志
+            console.log('erm health immediately after creation: ', erm.health); // 确认erm.health的值
+
             // 創建子彈群組
             bullets = this.physics.add.group({
                 classType: Phaser.Physics.Arcade.Image,
@@ -101,30 +114,60 @@
                 key: 'bullet',
                 active: false,
                 visible: false,
-                classType: Phaser.Physics.Arcade.Image
+                classType: Phaser.Physics.Arcade.sprite
             });
 
-            bullets.children.iterate(function (child) {
-                child.update = function () {
-                    if (this.y < 0) {
-                        this.setActive(false);
-                        this.setVisible(false);
-                    }
-                }
-            });
 
+            /**碰撞檢測**/
             // 碰撞檢測：子彈與平台
             this.physics.add.collider(bullets, platforms, function (bullet, platform) {
                 bullet.disableBody(true, true); // 禁用子彈並將其從場景中隱藏
             });
 
-            cursors = this.input.keyboard.createCursorKeys();
-
+            // 碰撞检测：player与platforms
             this.physics.add.collider(player, platforms);
 
+            // 碰撞检测：子弹与erm
+            this.physics.add.collider(erm, bullets, hit, null, this);
+
+            // 碰撞检测：player与erm
+            this.physics.add.collider(erm, player, function (erm, player) {
+                // 在短暂的时间后，重置 erm 的速度
+                erm.scene.time.delayedCall(100, function () { // 100毫秒后速度重置
+                    erm.body.velocity.x = 0;
+                    erm.body.velocity.y = 0;
+                }, [], erm);
+            });
+
+            //設定文字方框
+            Texture_hp = this.add.text(16, 16, 'HP:', { fontSize: '32px', fill: '#000' });
+            if (erm) {
+                Texture_hp.setText('HP: ' + erm.health);
+            }
+
+            Texture_dash_cd = this.add.text(16, 575, 'Dash_CD:', { fontSize: '24px', fill: '#000' });
+            Texture_dash_cd.setText('Dash_CD: ' + dash_cd);
+
+            //監聽鍵盤事件
+            cursors = this.input.keyboard.createCursorKeys();
+            cursors.shift = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
         }
 
         function update(time) {
+
+            // 确保erm对象存在并且活跃在场景中
+            if (erm && erm.active) {
+                Texture_hp.setText('HP: ' + erm.health); // 持续更新血量显示
+            }
+
+            // 计算剩余的冷却时间（以毫秒为单位）
+            var remainingCooldown = Math.max(dash_cd - time, 0);
+            // 将剩余冷却时间转换为秒，并保留小数点后一位
+            var remainingCooldownInSeconds = (remainingCooldown / 1000).toFixed(1);
+            // 更新显示
+            Texture_dash_cd.setText('Dash_CD: ' + remainingCooldownInSeconds);
+
+            /**player_move**/
             // 首先設置速度為0
             player.setVelocity(0);
 
@@ -138,11 +181,6 @@
 
                 player.anims.play('right', true);
             }
-            else {
-                player.setVelocityX(0);
-
-                player.anims.play('turn');
-            }
 
             if (cursors.up.isDown) {
                 player.setVelocityY(-160);
@@ -154,23 +192,108 @@
             // 如果沒有按鍵被按下，則角色停止移動
             if (!cursors.left.isDown && !cursors.right.isDown) {
                 player.setVelocityX(0);
+                player.anims.play('turn');
             }
 
             if (!cursors.up.isDown && !cursors.down.isDown) {
                 player.setVelocityY(0);
             }
+
+
             /**射擊**/
 
             // 射擊邏輯
             if (cursors.space.isDown && time > lastFired) {
-                var bullet = bullets.get();
+                // 檢查是否有移動鍵被按下
+                if (cursors.left.isDown || cursors.right.isDown || cursors.up.isDown || cursors.down.isDown) {
+                    var bullet = bullets.get();
+                }
 
                 if (bullet) {
                     bullet.enableBody(true, player.x, player.y, true, true); // 重新啟用物理體並設置位置
-                    bullet.setVelocityY(-300); // 給子彈一個初始速度
+                    // 給子彈一個初始速度
+                    if (cursors.left.isDown) {
+                        bullet.setVelocityX(-300);
+                    }
+                    else if (cursors.right.isDown) {
+                        bullet.setVelocityX(300);
+                    }
+
+                    if (cursors.up.isDown) {
+                        bullet.setVelocityY(-300);
+                    }
+                    else if (cursors.down.isDown) {
+                        bullet.setVelocityY(300);
+                    }
                     lastFired = time + 100; // 設置射擊間隔
                 }
             }
+            // 子彈的 'update' 函數，可以在這裡執行子彈的邏輯，比如與角色距離達到一定值時回收子彈
+            bullets.children.iterate(function (child) {
+                child.update = function () {
+                    // 計算子彈與角色的距離
+                    var distance = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+
+                    // 如果子彈與角色的距離大於特定值（例如 400 像素），則回收子彈
+                    if (distance > 400) {
+                        this.disableBody(true, true);
+                    }
+                }
+            });
+
+            /**skill**/
+            if (time > dash_cd && cursors.shift.isDown) {
+                // 冲刺距离
+                var dashDistance = 160;
+
+                // 计算冲刺后的潜在位置
+                var potentialX = player.x;
+                var potentialY = player.y;
+
+                if (cursors.left.isDown) {
+                    potentialX = Math.max(player.x - dashDistance, 0);
+                } else if (cursors.right.isDown) {
+                    potentialX = Math.min(player.x + dashDistance, this.physics.world.bounds.width);
+                }
+
+                if (cursors.up.isDown) {
+                    potentialY = Math.max(player.y - dashDistance, 0);
+                } else if (cursors.down.isDown) {
+                    potentialY = Math.min(player.y + dashDistance, this.physics.world.bounds.height);
+                }
+
+                // 执行冲刺
+                player.x = potentialX;
+                player.y = potentialY;
+                dash_cd = time + 3000; // 设置冲刺冷却时间
+            }
+
+
+        }
+
+        function hit(erm, bullet) {
+            console.log('Bullet hit erm', erm.health); // 输出erm的血量
+            bullet.disableBody(true, true); // 禁用子弹并将其从场景中隐藏
+            if (!erm.isInvulnerable && erm.active) {
+                erm.health -= 5;
+                console.log('New erm health', erm.health); // 输出减少血量后的erm的血量
+            }
+            // 给 erm 一个短暂的速度冲量
+            erm.body.velocity.x = bullet.body.velocity.x * 0.1;
+            erm.body.velocity.y = bullet.body.velocity.y * 0.1;
+
+            // 在短暂的时间后，重置 erm 的速度
+            erm.scene.time.delayedCall(100, function () { // 100毫秒后速度重置
+                erm.body.velocity.x = 0;
+                erm.body.velocity.y = 0;
+            }, [], erm);
+
+            if (erm.health <= 0) {
+                erm.disableBody(true, true); // 禁用erm的物理体并将其从场景中隐藏
+                erm.setActive(false); // 设置erm为非活动状态
+                erm.setVisible(false); // 使erm不可见
+            }
+
         }
 
 
